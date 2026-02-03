@@ -1,18 +1,71 @@
+# =========================
+# FLUTTER / DART
+# =========================
 .dart_tool/
+.packages
+.pub/
 build/
-linux/
-windows/
-macos/
-ios/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# =========================
+# PLATAFORMAS (geradas)
+# =========================
 android/
-dashboard_web/
+ios/
+linux/
+macos/
+windows/
+web/.last_build_id
+
+# =========================
+# ANDROID
+# =========================
+android/.gradle/
+android/local.properties
+*.jks
+*.keystore
+key.properties
+
+# =========================
+# IOS
+# =========================
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/App.framework
+
+# =========================
+# DESKTOP / IDE
+# =========================
+.vscode/
+.idea/
+*.iml
+*.log
+
+# =========================
+# BACKUPS / CHECKPOINTS (SEU CASO)
+# =========================
 _backups/
 _trash_ignorar/
-checkpoints/
 backups/
-lib.CHECKPOINT_*
+
+*.bak
+*.backup
+*.old
+
+*.CHECKPOINT*
 lib.BACKUP_*
 lib.bak_*
-lib.BAK_*
-*.bak
-*.CHECKPOINT*
+lib.CHECKPOINT_*
+
+# =========================
+# GIT
+# =========================
+.git/modules/
+
+# =========================
+# SISTEMA
+# =========================
+.DS_Store
+Thumbs.db
