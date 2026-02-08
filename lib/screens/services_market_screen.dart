@@ -1,10 +1,13 @@
 import 'dart:async';
+import '../services/auth/role_resolver.dart';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/app_theme.dart';
 import '../services/auth/auth_service.dart';
+import '../services/auth/role_resolver.dart';
 import '../services/avatar_cache.dart';
 import 'community_screen.dart';
 
@@ -25,6 +28,12 @@ class _ServicesMarketScreenState extends State<ServicesMarketScreen> {
   @override
   void initState() {
     super.initState();
+    () async {
+      try {
+        final role = await RoleResolver.resolveRole();
+        if (mounted) setState(() => _role = role);
+      } catch (_) {}
+    }();
     _loadRole();
     _authSub = _sb.auth.onAuthStateChange.listen((_) => _loadRole());
   }
@@ -39,7 +48,7 @@ class _ServicesMarketScreenState extends State<ServicesMarketScreen> {
     if (!mounted) return;
     setState(() => _loadingRole = true);
     try {
-      final r = await AuthService.getMyRole();
+      final r = await RoleResolver.resolveRole();
       if (!mounted) return;
       setState(() {
         _role = r == 'pro' ? 'pro' : 'client';
@@ -628,7 +637,7 @@ class _ProTabState extends State<_ProTab> {
           .from('service_requests')
           .select(
               'user_id, id, created_at, title, description, city, contact_name, contact_phone, contact_photo_url, done, client_rating, accepted_by, accepted_at')
-          .eq('done', false)
+          .or('done.is.null,done.eq.false')
           .order('created_at', ascending: false);
 
       setState(() => _items = List<Map<String, dynamic>>.from(res as List));

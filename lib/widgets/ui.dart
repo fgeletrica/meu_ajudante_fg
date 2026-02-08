@@ -17,7 +17,7 @@ class UiCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.card,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.border.withOpacity(.35)),
+        border: Border.all(color: AppTheme.gold.withOpacity(.35).withOpacity(.35)),
       ),
       child: child,
     );

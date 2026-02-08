@@ -3,22 +3,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../local_store.dart';
 
 class AuthService {
-  static SupabaseClient get _sb => Supabase.instance.client;
-
-  static bool get isLoggedIn => _sb.auth.currentSession != null;
+  static final SupabaseClient _sb = Supabase.instance.client;
 
   static User? get user => _sb.auth.currentUser;
+  static Session? get session => _sb.auth.currentSession;
 
-  // =========================
-  // LOGIN / LOGOUT
-  // =========================
-  static Future<void> signOut() async {
-    await _sb.auth.signOut();
-    // evita role antigo ficar preso no aparelho
-    try {
-      await LocalStore.setMarketRole('client');
-    } catch (_) {}
-  }
+  static bool get isLoggedIn => session != null;
 
   static Future<void> signIn({
     required String email,
@@ -28,9 +18,15 @@ class AuthService {
       email: email,
       password: password,
     );
+
     if (res.session == null) {
       throw Exception('Falha ao entrar');
     }
+
+    // sincroniza role real (profiles.role) e salva no LocalStore
+    try {
+      await getMyRole(); // getMyRole já faz setMarketRole internamente
+    } catch (_) {}
   }
 
   static Future<void> signUp({
@@ -39,6 +35,7 @@ class AuthService {
     required String role, // client | pro
     required String name,
     required String city,
+    required String phone,
   }) async {
     final res = await _sb.auth.signUp(
       email: email,
@@ -53,10 +50,27 @@ class AuthService {
     // garante profile
     await _sb.from('profiles').upsert({
       'id': u.id,
-      'role': role,
+      'role': role == 'pro' ? 'pro' : 'client',
       'name': name,
       'city': city,
+      'phone': phone,
     });
+
+    // salva role local
+    try {
+      await LocalStore.setMarketRole(role == 'pro' ? 'pro' : 'client');
+    } catch (_) {}
+  }
+
+  static Future<void> signOut() async {
+    try {
+      await _sb.auth.signOut();
+    } finally {
+      // limpa role local pra não “vazar” pro próximo login
+      try {
+        await LocalStore.clearMarketRole();
+      } catch (_) {}
+    }
   }
 
   // =========================
@@ -69,6 +83,14 @@ class AuthService {
     final res =
         await _sb.from('profiles').select('role').eq('id', u.id).maybeSingle();
 
-    return (res?['role'] ?? 'client').toString();
+    final raw = (res?['role'] ?? 'client').toString().trim();
+    final role = (raw == 'pro') ? 'pro' : 'client';
+    final normalized = role == 'pro' ? 'pro' : 'client';
+
+    try {
+      await LocalStore.setMarketRole(normalized);
+    } catch (_) {}
+
+    return normalized;
   }
 }

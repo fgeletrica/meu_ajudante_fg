@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:meu_ajudante_fg/routes/app_routes.dart';
-import '../services/auth/auth_service.dart';
-import '../core/app_theme.dart';
-import 'services_market_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../routes/app_routes.dart';
+import '../services/auth/role_resolver.dart';
+
+/// Home = DECISOR.
+/// Sempre decide baseado no RoleResolver (profiles.role).
+/// Sem “cache-first” pra não cair errado como CLIENTE no relogin.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -12,76 +15,50 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  bool _isPro = false;
-  bool _loading = true;
+  bool _navigated = false;
 
   @override
   void initState() {
     super.initState();
-    _loadRole();
+    _go();
   }
 
-  Future<void> _loadRole() async {
-    final role = await AuthService.getMyRole();
+  Future<void> _go() async {
+    if (_navigated) return;
+    _navigated = true;
+
+    final sb = Supabase.instance.client;
+
+    // espera auth estabilizar (token/session)
+    final started = DateTime.now();
+    while (sb.auth.currentUser == null &&
+        DateTime.now().difference(started).inMilliseconds < 2500) {
+      await Future.delayed(const Duration(milliseconds: 120));
+    }
+
+    String role = 'client';
+    try {
+      role = await RoleResolver.resolveRole();
+      role = (role == 'pro') ? 'pro' : 'client';
+    } catch (_) {
+      role = 'client';
+    }
+
     if (!mounted) return;
-    setState(() {
-      _isPro = role == 'pro';
-      _loading = false;
-    });
+
+    final dest = (role == 'pro') ? AppRoutes.homePro : AppRoutes.homeClient;
+
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      dest,
+      (_) => false,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      appBar: AppBar(
-        title: Text(_isPro ? 'Painel Profissional' : 'Painel Cliente'),
-        backgroundColor: AppTheme.bg,
-        elevation: 0,
-      ),
-      body: _isPro ? _proView() : _clientView(),
-    );
-  }
-
-  Widget _clientView() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _tile('Cálculo Elétrico', AppRoutes.calc),
-        _tile('Materiais', AppRoutes.materiais),
-        _tile('Marketplace de Serviços', AppRoutes.marketplace),
-        _tile('Minha Conta', AppRoutes.conta),
-      ],
-    );
-  }
-
-  Widget _proView() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _tile('Cálculo Elétrico', AppRoutes.calc),
-        _tile('Ferramentas', AppRoutes.ferramentas),
-        _tile('Orçamentos', AppRoutes.orcamentos),
-        _tile('Agenda', AppRoutes.agenda),
-        _tile('Marketplace (PRO)', AppRoutes.marketplace),
-        _tile('Minha Conta', AppRoutes.conta),
-      ],
-    );
-  }
-
-  Widget _tile(String title, String route) {
-    return Card(
-      child: ListTile(
-        title: Text(title),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => Navigator.pushNamed(context, route),
-      ),
+    return const Scaffold(
+      body: Center(child: CircularProgressIndicator()),
     );
   }
 }

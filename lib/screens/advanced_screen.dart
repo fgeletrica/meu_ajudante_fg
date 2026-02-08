@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:meu_ajudante_fg/routes/app_routes.dart';
 import '../core/app_theme.dart';
 import '../services/app_mode_store.dart';
-import 'industrial_home_screen.dart';
+import 'gate_screen.dart';
 
 class AdvancedScreen extends StatelessWidget {
   const AdvancedScreen({super.key});
@@ -11,7 +11,7 @@ class AdvancedScreen extends StatelessWidget {
     await AppModeStore.setMode('ind');
     if (!context.mounted) return;
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const IndustrialHomeScreen()),
+      MaterialPageRoute(builder: (_) => const GateScreen()),
     );
   }
 

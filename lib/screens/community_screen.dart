@@ -51,7 +51,7 @@ class _CommunityScreenState extends State<CommunityScreen>
       } catch (_) {}
 
       _isPro = isPro;
-      _tab = TabController(length: _isPro ? 3 : 2, vsync: this);
+      _tab = TabController(length: 3, vsync: this);
 
       if (!mounted) return;
       setState(() => _loadingRole = false);
@@ -80,27 +80,17 @@ class _CommunityScreenState extends State<CommunityScreen>
       );
     }
 
-    final tabs = _isPro
-        ? const [
-            Tab(icon: Icon(Icons.public), text: 'Feed'),
-            Tab(icon: Icon(Icons.add_box_outlined), text: 'Postar'),
-            Tab(icon: Icon(Icons.person_outline), text: 'Meu perfil'),
-          ]
-        : const [
-            Tab(icon: Icon(Icons.public), text: 'Feed'),
-            Tab(icon: Icon(Icons.person_outline), text: 'Meu perfil'),
-          ];
+    final tabs = const [
+  Tab(icon: Icon(Icons.public), text: "Feed"),
+  Tab(icon: Icon(Icons.add_box_outlined), text: "Postar"),
+  Tab(icon: Icon(Icons.person_outline), text: "Meu perfil"),
+];
 
-    final views = _isPro
-        ? const [
-            _FeedTab(),
-            _CreatePostTab(),
-            _MyPostsTab(),
-          ]
-        : const [
-            _FeedTab(),
-            _MyPostsTab(),
-          ];
+    final views = const [
+  _FeedTab(),
+  _CreatePostTab(),
+  _MyPostsTab(),
+];
 
     return Scaffold(
       backgroundColor: AppTheme.bg,

@@ -69,3 +69,22 @@ lib.CHECKPOINT_*
 # =========================
 .DS_Store
 Thumbs.db
+
+# ===== backups / checkpoints (gerados no debug) =====
+*.BAK_*
+*.BROKEN_*
+*.CHECKPOINT_*
+*.bak
+checkpoints/
+backups/
+
+# flutter / dart
+.dart_tool/
+.buildlog
+build/
+linux/flutter/ephemeral/
+android/.gradle/
+ios/Pods/
+*.iml
+.idea/
+.vscode/

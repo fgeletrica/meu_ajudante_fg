@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:meu_ajudante_fg/routes/app_routes.dart';
 
 class ProAccess {
   static const _kProDev = 'pro_dev';

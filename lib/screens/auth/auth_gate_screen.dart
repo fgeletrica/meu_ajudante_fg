@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../routes/app_routes.dart';
 import '../../services/auth/auth_service.dart';
-import '../../services/local_store.dart';
+import '../../services/auth/role_resolver.dart';
 
 class AuthGateScreen extends StatefulWidget {
   const AuthGateScreen({super.key});
@@ -14,6 +14,7 @@ class AuthGateScreen extends StatefulWidget {
 
 class _AuthGateScreenState extends State<AuthGateScreen> {
   bool _checking = true;
+  bool _navigated = false;
 
   @override
   void initState() {
@@ -22,39 +23,13 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
 
     Supabase.instance.client.auth.onAuthStateChange.listen((_) async {
       if (!mounted) return;
+      _navigated = false;
       _bootstrap();
     });
   }
 
-  /// 🔐 Lê account_type do profiles SEM quebrar se:
-  /// - não existir coluna
-  /// - não existir registro
-  /// - vier null
-  Future<String> _getAccountTypeSafe() async {
-    final sb = Supabase.instance.client;
-    final u = sb.auth.currentUser;
-    if (u == null) return 'residential';
-
-    try {
-      final Map<String, dynamic>? res = await sb
-          .from('profiles')
-          .select('account_type')
-          .eq('id', u.id)
-          .maybeSingle();
-
-      final v = (res?['account_type'] ?? '').toString().trim().toLowerCase();
-
-      if (v == 'industrial' || v == 'residential') {
-        return v;
-      }
-    } catch (_) {
-      // ignora qualquer erro de schema
-    }
-
-    return 'residential';
-  }
-
   Future<void> _bootstrap() async {
+    if (!mounted) return;
     setState(() => _checking = true);
 
     if (!AuthService.isLoggedIn) {
@@ -63,9 +38,9 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
       return;
     }
 
+    // aquece o resolver (garante cache correto)
     try {
-      final role = await AuthService.getMyRole();
-      await LocalStore.setMarketRole(role);
+      await RoleResolver.resolveRole();
     } catch (_) {}
 
     if (!mounted) return;
@@ -87,56 +62,25 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
     }
 
     return FutureBuilder<String>(
-      future: _getAccountTypeSafe(),
-      builder: (context, snapType) {
-        if (!snapType.hasData) {
+      future: RoleResolver.resolveRole(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
           return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+              body: Center(child: CircularProgressIndicator()));
         }
 
-        final accountType = snapType.data!;
+        if (_navigated) return const Scaffold(body: SizedBox.shrink());
+        _navigated = true;
 
-        return FutureBuilder<String>(
-          future: AuthService.getMyRole(),
-          builder: (context, snapRole) {
-            if (!snapRole.hasData) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
+        final role = (snap.data == 'pro') ? 'pro' : 'client';
+        final dest = (role == 'pro') ? AppRoutes.homePro : AppRoutes.homeClient;
 
-            final role = snapRole.data!;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(context, dest, (_) => false);
+        });
 
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-
-              if (accountType == 'industrial') {
-                Navigator.pushNamedAndRemoveUntil(
-                  context,
-                  AppRoutes.industrial,
-                  (_) => false,
-                );
-              } else {
-                if (role == 'pro') {
-                  Navigator.pushNamedAndRemoveUntil(
-                    context,
-                    AppRoutes.homePro,
-                    (_) => false,
-                  );
-                } else {
-                  Navigator.pushNamedAndRemoveUntil(
-                    context,
-                    AppRoutes.homeClient,
-                    (_) => false,
-                  );
-                }
-              }
-            });
-
-            return const Scaffold(body: SizedBox.shrink());
-          },
-        );
+        return const Scaffold(body: SizedBox.shrink());
       },
     );
   }

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:meu_ajudante_fg/core/app_theme.dart';
-import 'package:meu_ajudante_fg/routes/app_routes.dart';
+import '../../services/auth/auth_service.dart';
+import 'register_screen.dart';
+import '../gate_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,283 +12,174 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  bool _industrial = true;
-
   final _email = TextEditingController();
-  final _matricula = TextEditingController();
   final _pass = TextEditingController();
 
   bool _busy = false;
-  bool _hide = true;
+  bool _showPass = false;
 
   @override
   void dispose() {
     _email.dispose();
-    _matricula.dispose();
     _pass.dispose();
     super.dispose();
-  }
-
-  String _digits(String s) => s.replaceAll(RegExp(r'[^0-9]'), '');
-  String _industrialEmail(String mat) => '${_digits(mat)}@fg.com';
-
-  InputDecoration _dec({
-    required String label,
-    String? hint,
-    required IconData icon,
-    Widget? suffix,
-  }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: Icon(icon),
-      suffixIcon: suffix,
-      filled: true,
-      fillColor: AppTheme.bg.withOpacity(.35),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
-      ),
-    );
-  }
-
-  Widget _segment() {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: AppTheme.bg.withOpacity(.35),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border.withOpacity(.35)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => setState(() => _industrial = true),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: _industrial
-                      ? AppTheme.gold.withOpacity(.95)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Center(
-                  child: Text(
-                    'Industrial',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: _industrial
-                          ? Colors.black
-                          : Colors.white.withOpacity(.8),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => setState(() => _industrial = false),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: !_industrial
-                      ? AppTheme.gold.withOpacity(.95)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Center(
-                  child: Text(
-                    'Residencial/Predial',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: !_industrial
-                          ? Colors.black
-                          : Colors.white.withOpacity(.8),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _login() async {
     if (_busy) return;
 
+    final email = _email.text.trim();
     final pass = _pass.text;
-    if (pass.trim().length < 6) {
+
+    if (email.isEmpty || !email.contains('@') || pass.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Senha muito curta (mínimo 6).')),
+        const SnackBar(content: Text('Informe e-mail e senha.')),
       );
       return;
     }
 
-    String emailToUse;
-
-    if (_industrial) {
-      final m = _digits(_matricula.text);
-      if (m.length != 7) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content:
-                  Text('Matrícula inválida. Use 7 números (ex: 6131450).')),
-        );
-        return;
-      }
-      emailToUse = _industrialEmail(m);
-    } else {
-      final e = _email.text.trim().toLowerCase();
-      if (!e.contains('@') || !e.contains('.')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Email inválido.')),
-        );
-        return;
-      }
-      emailToUse = e;
-    }
-
     setState(() => _busy = true);
     try {
-      await Supabase.instance.client.auth.signInWithPassword(
-        email: emailToUse,
-        password: pass,
+      await AuthService.signIn(email: email, password: pass);
+      if (!mounted) return;
+
+      await AuthService.getMyRole();
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const GateScreen()),
+        (route) => false,
       );
+      return;
+
+// garante role atualizado (pra não entrar como cliente por cache)
+      try {
+        await AuthService.getMyRole();
+      } catch (_) {}
 
       if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed(AppRoutes.authGate);
+      // AuthGate deve redirecionar, aqui só dá feedback
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bem-vindo!')),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro no login: $e')),
+        SnackBar(content: Text('Erro ao entrar: $e')),
       );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
+  Future<void> _goRegister() async {
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const RegisterScreen()),
+    );
+
+    if (!mounted) return;
+    if (ok == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Conta criada! Agora é só entrar.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      backgroundColor: AppTheme.bg,
-      body: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 520),
-          padding: const EdgeInsets.all(16),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppTheme.card,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppTheme.border.withOpacity(.35)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: ListView(
+              padding: const EdgeInsets.all(24),
               children: [
-                Text(
-                  'FG Elétrica',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(.95),
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Entre para acessar seu painel',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(.75),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _segment(),
-                const SizedBox(height: 14),
-                if (_industrial) ...[
-                  TextField(
-                    controller: _matricula,
-                    decoration: _dec(
-                      label: 'Matrícula',
-                      hint: 'Ex: 6131450',
-                      icon: Icons.badge,
-                    ),
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                  ),
-                ] else ...[
-                  TextField(
-                    controller: _email,
-                    decoration: _dec(
-                      label: 'Email',
-                      hint: 'seuemail@exemplo.com',
-                      icon: Icons.email,
-                    ),
-                    keyboardType: TextInputType.emailAddress,
-                    textInputAction: TextInputAction.next,
-                  ),
-                ],
+                const SizedBox(height: 24),
+                const Icon(Icons.bolt, size: 44),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: _pass,
-                  decoration: _dec(
-                    label: 'Senha',
-                    icon: Icons.lock,
-                    suffix: IconButton(
-                      onPressed: () => setState(() => _hide = !_hide),
-                      icon:
-                          Icon(_hide ? Icons.visibility : Icons.visibility_off),
-                    ),
-                  ),
-                  obscureText: _hide,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) => _login(),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.gold,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    onPressed: _busy ? null : _login,
-                    child: Text(
-                      _busy ? 'Entrando...' : 'Entrar',
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () =>
-                      Navigator.of(context).pushNamed(AppRoutes.register),
-                  child: const Text('Criar conta'),
+                Text(
+                  'Bem-vindo de volta',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  _industrial
-                      ? 'Industrial: login é matrícula + senha.'
-                      : 'Residencial: login é email + senha.',
-                  style: TextStyle(
-                      color: Colors.white.withOpacity(.6), fontSize: 12),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Ao continuar, você concorda em usar o app de forma responsável.',
+                  'Entre para acessar o marketplace, ranking e suas informações.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: Colors.white.withOpacity(.45), fontSize: 11),
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 18),
+                Card(
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    side: BorderSide(color: theme.dividerColor),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: _email,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          decoration: const InputDecoration(
+                            labelText: 'E-mail',
+                            prefixIcon: Icon(Icons.alternate_email),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _pass,
+                          obscureText: !_showPass,
+                          textInputAction: TextInputAction.done,
+                          decoration: InputDecoration(
+                            labelText: 'Senha',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              onPressed: () =>
+                                  setState(() => _showPass = !_showPass),
+                              icon: Icon(_showPass
+                                  ? Icons.visibility_off
+                                  : Icons.visibility),
+                            ),
+                          ),
+                          onSubmitted: (_) => _login(),
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: FilledButton(
+                            onPressed: _busy ? null : _login,
+                            child: Text(_busy ? 'Entrando...' : 'Entrar'),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 46,
+                          child: OutlinedButton(
+                            onPressed: _busy ? null : _goRegister,
+                            child: const Text('Criar conta'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Dica: se você é Profissional, escolha “Profissional” no cadastro pra aparecer no ranking.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                 ),
               ],
             ),

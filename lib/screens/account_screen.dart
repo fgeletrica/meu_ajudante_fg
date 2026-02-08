@@ -7,6 +7,7 @@ import '../core/app_theme.dart';
 import 'package:meu_ajudante_fg/routes/app_routes.dart';
 import '../services/auth/auth_service.dart';
 import '../services/avatar_cache.dart';
+import '../services/local_store.dart';
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -53,8 +54,6 @@ class _AccountScreenState extends State<AccountScreen> {
     });
 
     try {
-      _role = await AuthService.getMyRole();
-
       final u = AuthService.user;
       if (u == null) throw Exception('Usuário não logado');
 
@@ -64,7 +63,9 @@ class _AccountScreenState extends State<AccountScreen> {
           .eq('id', u.id)
           .maybeSingle();
 
-      _nameCtrl.text = (prof?['name'] ?? '').toString();
+      final rawRole = (prof?['role'] ?? '').toString().trim();
+      _role = (rawRole == 'pro') ? 'pro' : 'client';
+      // sincroniza cache local (evita herdar role de outra conta)_nameCtrl.text = (prof?['name'] ?? '').toString();
       _cityCtrl.text = (prof?['city'] ?? '').toString();
       _phoneCtrl.text = (prof?['phone'] ?? '').toString();
 
@@ -135,7 +136,6 @@ class _AccountScreenState extends State<AccountScreen> {
       // salva no profile
       await _sb.from('profiles').upsert({
         'id': u.id,
-        'role': _role == 'pro' ? 'pro' : 'client',
         'avatar_url': url,
       });
 
@@ -177,7 +177,6 @@ class _AccountScreenState extends State<AccountScreen> {
     try {
       await _sb.from('profiles').upsert({
         'id': u.id,
-        'role': _role == 'pro' ? 'pro' : 'client',
         'name': name,
         'city': city,
         'phone': phone,
