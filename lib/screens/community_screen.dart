@@ -51,7 +51,7 @@ class _CommunityScreenState extends State<CommunityScreen>
       } catch (_) {}
 
       _isPro = isPro;
-      _tab = TabController(length: 3, vsync: this);
+      _tab = TabController(length: _isPro ? 3 : 2, vsync: this);
 
       if (!mounted) return;
       setState(() => _loadingRole = false);
@@ -80,17 +80,27 @@ class _CommunityScreenState extends State<CommunityScreen>
       );
     }
 
-    final tabs = const [
-  Tab(icon: Icon(Icons.public), text: "Feed"),
-  Tab(icon: Icon(Icons.add_box_outlined), text: "Postar"),
-  Tab(icon: Icon(Icons.person_outline), text: "Meu perfil"),
-];
+    final tabs = _isPro
+        ? const [
+            Tab(icon: Icon(Icons.public), text: 'Feed'),
+            Tab(icon: Icon(Icons.add_box_outlined), text: 'Postar'),
+            Tab(icon: Icon(Icons.person_outline), text: 'Meu perfil'),
+          ]
+        : const [
+            Tab(icon: Icon(Icons.public), text: 'Feed'),
+            Tab(icon: Icon(Icons.person_outline), text: 'Meu perfil'),
+          ];
 
-    final views = const [
-  _FeedTab(),
-  _CreatePostTab(),
-  _MyPostsTab(),
-];
+    final views = _isPro
+        ? const [
+            _FeedTab(),
+            _CreatePostTab(),
+            _MyPostsTab(),
+          ]
+        : const [
+            _FeedTab(),
+            _MyPostsTab(),
+          ];
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -114,6 +124,7 @@ class _CommunityScreenState extends State<CommunityScreen>
   }
 }
 
+
 class _FeedTab extends StatefulWidget {
   const _FeedTab();
 
@@ -126,7 +137,11 @@ class _FeedTabState extends State<_FeedTab> {
 
   bool _loading = true;
   String? _err;
+
   List<Map<String, dynamic>> _items = [];
+
+  // cache de likes do usuário logado (pra ficar rápido)
+  final Set<String> _liked = <String>{};
 
   @override
   void initState() {
@@ -135,6 +150,7 @@ class _FeedTabState extends State<_FeedTab> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _err = null;
@@ -147,10 +163,34 @@ class _FeedTabState extends State<_FeedTab> {
               'id, created_at, author_id, author_name, author_avatar_url, caption, media_url, media_type, like_count, comment_count')
           .eq('is_public', true)
           .order('created_at', ascending: false)
-          .limit(50)
+          .limit(60)
           .timeout(const Duration(seconds: 12));
 
       _items = List<Map<String, dynamic>>.from(res as List);
+
+      // carrega likes do usuário (1 query só)
+      _liked.clear();
+      final u = AuthService.user;
+      if (u != null && _items.isNotEmpty) {
+        final ids = _items.map((e) => (e['id'] ?? '').toString()).where((s) => s.isNotEmpty).toList();
+        if (ids.isNotEmpty) {
+          try {
+            final likes = await _sb
+                .from('post_likes')
+                .select('post_id')
+                .eq('user_id', u.id)
+                .inFilter('post_id', ids)
+                .timeout(const Duration(seconds: 12));
+
+            for (final row in List<Map<String, dynamic>>.from(likes as List)) {
+              final pid = (row['post_id'] ?? '').toString();
+              if (pid.isNotEmpty) _liked.add(pid);
+            }
+          } catch (_) {
+            // sem stress, só não marca os likes
+          }
+        }
+      }
     } catch (e) {
       _err = (e is TimeoutException)
           ? 'Timeout ao falar com o servidor (Supabase). Verifique sua internet/DNS e tente de novo.'
@@ -160,26 +200,29 @@ class _FeedTabState extends State<_FeedTab> {
     }
   }
 
-  Future<bool> _isLiked(String postId) async {
-    final u = AuthService.user;
-    if (u == null) return false;
-    final row = await _sb
-        .from('post_likes')
-        .select('post_id')
-        .eq('post_id', postId)
-        .eq('user_id', u.id)
-        .maybeSingle()
-        .timeout(const Duration(seconds: 12));
-    return row != null;
-  }
-
-  Future<void> _toggleLike(String postId) async {
+  Future<void> _toggleLikeLocal(Map<String, dynamic> post) async {
     final u = AuthService.user;
     if (u == null) return;
 
-    final liked = await _isLiked(postId).timeout(const Duration(seconds: 12));
+    final postId = (post['id'] ?? '').toString().trim();
+    if (postId.isEmpty) return;
+
+    final already = _liked.contains(postId);
+
+    // otimista na UI
+    setState(() {
+      if (already) {
+        _liked.remove(postId);
+        post['like_count'] = (post['like_count'] ?? 0) - 1;
+        if ((post['like_count'] as int) < 0) post['like_count'] = 0;
+      } else {
+        _liked.add(postId);
+        post['like_count'] = (post['like_count'] ?? 0) + 1;
+      }
+    });
+
     try {
-      if (liked) {
+      if (already) {
         await _sb
             .from('post_likes')
             .delete()
@@ -189,12 +232,22 @@ class _FeedTabState extends State<_FeedTab> {
       } else {
         await _sb
             .from('post_likes')
-            .insert({'post_id': postId, 'user_id': u.id}).timeout(
-                const Duration(seconds: 12));
+            .insert({'post_id': postId, 'user_id': u.id})
+            .timeout(const Duration(seconds: 12));
       }
-      await _load();
     } catch (e) {
+      // reverte se falhar
       if (!mounted) return;
+      setState(() {
+        if (already) {
+          _liked.add(postId);
+          post['like_count'] = (post['like_count'] ?? 0) + 1;
+        } else {
+          _liked.remove(postId);
+          post['like_count'] = (post['like_count'] ?? 0) - 1;
+          if ((post['like_count'] as int) < 0) post['like_count'] = 0;
+        }
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro no like: $e')),
       );
@@ -221,8 +274,13 @@ class _FeedTabState extends State<_FeedTab> {
     );
   }
 
-  void _openComments(BuildContext context, String postId, String authorId,
-      String authorName, String avatar) {
+  void _openComments(
+    BuildContext context,
+    String postId,
+    String authorId,
+    String authorName,
+    String avatar,
+  ) {
     final id = postId.trim();
     if (id.isEmpty) return;
     Navigator.of(context).push(
@@ -237,8 +295,7 @@ class _FeedTabState extends State<_FeedTab> {
     );
   }
 
-  void _openProfile(
-      BuildContext context, String userId, String name, String avatar) {
+  void _openProfile(BuildContext context, String userId, String name, String avatar) {
     final id = userId.trim();
     if (id.isEmpty) return;
     Navigator.of(context).push(
@@ -252,28 +309,12 @@ class _FeedTabState extends State<_FeedTab> {
     );
   }
 
-  Widget _pill(String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(.06),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppTheme.border.withOpacity(.25)),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: Colors.white.withOpacity(.85),
-          fontWeight: FontWeight.w800,
-          fontSize: 12,
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     if (_err != null) {
       return Center(
         child: Padding(
@@ -283,142 +324,48 @@ class _FeedTabState extends State<_FeedTab> {
       );
     }
 
+    if (_items.isEmpty) {
+      return Center(
+        child: Text(
+          'Ainda não tem posts.',
+          style: TextStyle(color: Colors.white.withOpacity(.7)),
+        ),
+      );
+    }
+
     return RefreshIndicator(
       onRefresh: _load,
-      child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(0, 10, 0, 18),
         itemCount: _items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (_, i) {
           final it = _items[i];
+
           final postId = (it['id'] ?? '').toString();
           final authorId = (it['author_id'] ?? '').toString();
           final authorName = (it['author_name'] ?? '').toString();
-          final avatar = (it['author_avatar_url'] ?? '').toString().trim();
+          final authorAvatar = (it['author_avatar_url'] ?? '').toString();
+
           final caption = (it['caption'] ?? '').toString();
-          final mediaUrl = (it['media_url'] ?? '').toString().trim();
-          final likeCount = (it['like_count'] ?? 0);
-          final commentCount = (it['comment_count'] ?? 0);
+          final mediaUrl = (it['media_url'] ?? '').toString();
+          final likeCount = (it['like_count'] ?? 0) as int;
+          final commentCount = (it['comment_count'] ?? 0) as int;
 
-          if (avatar.isNotEmpty) {
-            AvatarCache.rememberUserId(
-                (it['author_id'] ?? '').toString(), avatar);
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              AvatarCache.warm(context, avatar);
-            });
-          }
+          final isLiked = _liked.contains(postId);
 
-          return Card(
-            color: AppTheme.card,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      GestureDetector(
-                        onTap: avatar.isEmpty
-                            ? null
-                            : () => _openAvatarPreview(context, avatar),
-                        child: CircleAvatar(
-                          radius: 18,
-                          backgroundColor: Colors.white.withOpacity(.08),
-                          backgroundImage:
-                              avatar.isEmpty ? null : NetworkImage(avatar),
-                          child: avatar.isEmpty
-                              ? const Icon(Icons.person,
-                                  size: 18, color: Colors.white)
-                              : null,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: InkWell(
-                          onTap: () => _openProfile(
-                              context, authorId, authorName, avatar),
-                          child: Text(
-                            authorName.isEmpty ? 'Usuário' : authorName,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                      ),
-                      _pill('❤️ $likeCount  💬 $commentCount'),
-                    ],
-                  ),
-                  if (mediaUrl.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
-                      child: Image.network(
-                        mediaUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          height: 180,
-                          alignment: Alignment.center,
-                          child: const Text('Falha ao carregar imagem'),
-                        ),
-                      ),
-                    ),
-                  ],
-                  if (caption.trim().isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      caption,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(.88),
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _toggleLike(postId),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            side: BorderSide(
-                                color: AppTheme.border.withOpacity(.35)),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          icon: const Icon(Icons.favorite_border),
-                          label: const Text('Curtir',
-                              style: TextStyle(fontWeight: FontWeight.w900)),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _openComments(
-                              context, postId, authorId, authorName, avatar),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            side: BorderSide(
-                                color: AppTheme.border.withOpacity(.35)),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          icon: const Icon(Icons.mode_comment_outlined),
-                          label: const Text('Comentar',
-                              style: TextStyle(fontWeight: FontWeight.w900)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+          return _IgPostCard(
+            authorName: authorName.isEmpty ? 'Usuário' : authorName,
+            authorAvatar: authorAvatar,
+            caption: caption,
+            mediaUrl: mediaUrl,
+            likeCount: likeCount,
+            commentCount: commentCount,
+            isLiked: isLiked,
+            onTapAuthor: () => _openProfile(context, authorId, authorName, authorAvatar),
+            onTapAvatar: () => _openAvatarPreview(context, authorAvatar),
+            onLike: () => _toggleLikeLocal(it),
+            onComment: () => _openComments(context, postId, authorId, authorName, authorAvatar),
           );
         },
       ),
@@ -426,6 +373,174 @@ class _FeedTabState extends State<_FeedTab> {
   }
 }
 
+class _IgPostCard extends StatelessWidget {
+  final String authorName;
+  final String authorAvatar;
+  final String caption;
+  final String mediaUrl;
+  final int likeCount;
+  final int commentCount;
+  final bool isLiked;
+  final VoidCallback onTapAuthor;
+  final VoidCallback onTapAvatar;
+  final VoidCallback onLike;
+  final VoidCallback onComment;
+
+  const _IgPostCard({
+    required this.authorName,
+    required this.authorAvatar,
+    required this.caption,
+    required this.mediaUrl,
+    required this.likeCount,
+    required this.commentCount,
+    required this.isLiked,
+    required this.onTapAuthor,
+    required this.onTapAvatar,
+    required this.onLike,
+    required this.onComment,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(.06),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(.07)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // HEADER (avatar + nome)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: onTapAvatar,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      color: Colors.white.withOpacity(.08),
+                      child: authorAvatar.trim().isEmpty
+                          ? Icon(Icons.person, color: Colors.white.withOpacity(.75))
+                          : Image.network(authorAvatar, fit: BoxFit.cover),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: onTapAuthor,
+                    child: Text(
+                      authorName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () {},
+                  icon: Icon(Icons.more_horiz, color: Colors.white.withOpacity(.7)),
+                ),
+              ],
+            ),
+          ),
+
+          // MÍDIA (quadrado tipo insta)
+          if (mediaUrl.trim().isEmpty)
+            AspectRatio(
+              aspectRatio: 1,
+              child: Container(
+                color: Colors.white.withOpacity(.05),
+                child: Center(
+                  child: Icon(Icons.image, color: Colors.white.withOpacity(.35), size: 44),
+                ),
+              ),
+            )
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: Image.network(mediaUrl, fit: BoxFit.cover),
+              ),
+            ),
+
+          const SizedBox(height: 8),
+
+          // AÇÕES
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: onLike,
+                  icon: Icon(
+                    isLiked ? Icons.favorite : Icons.favorite_border,
+                    color: isLiked ? Colors.redAccent : Colors.white.withOpacity(.9),
+                  ),
+                ),
+                IconButton(
+                  onPressed: onComment,
+                  icon: Icon(Icons.mode_comment_outlined, color: Colors.white.withOpacity(.9)),
+                ),
+                const Spacer(),
+              ],
+            ),
+          ),
+
+          // CONTAGEM
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+            child: Text(
+              '$likeCount curtidas',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+            ),
+          ),
+
+          // LEGENDA
+          if (caption.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+              child: RichText(
+                text: TextSpan(
+                  style: TextStyle(color: Colors.white.withOpacity(.9), height: 1.25),
+                  children: [
+                    TextSpan(
+                      text: authorName,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const TextSpan(text: '  '),
+                    TextSpan(text: caption),
+                  ],
+                ),
+              ),
+            ),
+
+          // VER COMENTÁRIOS
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            child: GestureDetector(
+              onTap: onComment,
+              child: Text(
+                commentCount <= 0 ? 'Comentar' : 'Ver $commentCount comentários',
+                style: TextStyle(color: Colors.white.withOpacity(.65)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 class _CreatePostTab extends StatefulWidget {
   const _CreatePostTab();
 

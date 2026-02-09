@@ -3,61 +3,46 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../local_store.dart';
 
 class RoleResolver {
-  static final _sb = Supabase.instance.client;
+  static final SupabaseClient _sb = Supabase.instance.client;
 
-  /// Fonte de verdade: public.profiles.role  ('pro' | 'client')
-  /// - Server FIRST
-  /// - Retry curto pra evitar corrida pós-login
-  /// - Só usa cache se não conseguir ler do server
+  /// Fonte da verdade: public.profiles.role
+  /// - Sempre tenta server
+  /// - Cache é só fallback se estiver offline/erro
   static Future<String> resolveRole() async {
-    // espera sessão aparecer (relogin costuma dar currentUser null por alguns ms)
-    for (int i = 0; i < 8; i++) {
-      final u = _sb.auth.currentUser;
-      if (u != null) break;
-      await Future.delayed(const Duration(milliseconds: 150));
+    // espera sessão aparecer (evita race do relogar)
+    for (int i = 0; i < 10; i++) {
+      if (_sb.auth.currentUser != null) break;
+      await Future.delayed(const Duration(milliseconds: 120));
     }
 
     final u = _sb.auth.currentUser;
     if (u == null) {
-      // sem sessão: tenta cache, senão client
-      try {
-        final cached = await LocalStore.getMarketRole();
-        return (cached == 'pro') ? 'pro' : 'client';
-      } catch (_) {
-        return 'client';
-      }
+      final cached = await LocalStore.getCachedRole();
+      return (cached == 'pro') ? 'pro' : 'client';
     }
 
-    // tenta buscar role no profiles com retry (evita race / RLS / refresh)
-    for (int i = 0; i < 12; i++) {
+    // tenta buscar no server com retry
+    for (int i = 0; i < 10; i++) {
       try {
-        final Map<String, dynamic>? res = await _sb
+        final res = await _sb
             .from('profiles')
             .select('role')
             .eq('id', u.id)
             .maybeSingle();
 
         final raw = (res?['role'] ?? '').toString().trim().toLowerCase();
-
         if (raw == 'pro' || raw == 'client') {
-          try {
-            await LocalStore.setMarketRole(raw);
-          } catch (_) {}
+          await LocalStore.setCachedRole(raw);
           return raw;
         }
       } catch (_) {
-        // ignora e tenta de novo
+        // segue retry
       }
-
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(const Duration(milliseconds: 180));
     }
 
-    // fallback: cache
-    try {
-      final cached = await LocalStore.getMarketRole();
-      return (cached == 'pro') ? 'pro' : 'client';
-    } catch (_) {
-      return 'client';
-    }
+    // fallback cache
+    final cached = await LocalStore.getCachedRole();
+    return (cached == 'pro') ? 'pro' : 'client';
   }
 }

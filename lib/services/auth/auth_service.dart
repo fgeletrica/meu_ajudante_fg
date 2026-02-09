@@ -1,5 +1,4 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
-
 import '../local_store.dart';
 
 class AuthService {
@@ -7,7 +6,6 @@ class AuthService {
 
   static User? get user => _sb.auth.currentUser;
   static Session? get session => _sb.auth.currentSession;
-
   static bool get isLoggedIn => session != null;
 
   static Future<void> signIn({
@@ -23,9 +21,9 @@ class AuthService {
       throw Exception('Falha ao entrar');
     }
 
-    // sincroniza role real (profiles.role) e salva no LocalStore
+    // sincroniza role do banco (não trava UI)
     try {
-      await getMyRole(); // getMyRole já faz setMarketRole internamente
+      await getMyRole();
     } catch (_) {}
   }
 
@@ -40,11 +38,17 @@ class AuthService {
     final res = await _sb.auth.signUp(
       email: email,
       password: password,
+      data: {
+        'role': (role == 'pro') ? 'pro' : 'client',
+        'name': name,
+        'city': city,
+        'phone': phone,
+      },
     );
 
     final u = res.user;
     if (u == null) {
-      throw Exception('Falha ao criar usuário');
+      throw Exception('Falha ao criar usuario');
     }
 
     // garante profile
@@ -64,33 +68,56 @@ class AuthService {
 
   static Future<void> signOut() async {
     try {
-      await _sb.auth.signOut();
-    } finally {
-      // limpa role local pra não “vazar” pro próximo login
-      try {
-        await LocalStore.clearMarketRole();
-      } catch (_) {}
-    }
+      await _sb.auth.signOut().timeout(const Duration(seconds: 4));
+    } catch (_) {}
+    // não apaga market_role aqui
   }
 
   // =========================
   // ROLE (CLIENTE vs PRO)
   // =========================
   static Future<String> getMyRole() async {
-    final u = user;
-    if (u == null) return 'client';
-
-    final res =
-        await _sb.from('profiles').select('role').eq('id', u.id).maybeSingle();
-
-    final raw = (res?['role'] ?? 'client').toString().trim();
-    final role = (raw == 'pro') ? 'pro' : 'client';
-    final normalized = role == 'pro' ? 'pro' : 'client';
-
+    // fallback: usa cache local (não rebaixa pra client por erro de rede)
+    var cached = 'client';
     try {
-      await LocalStore.setMarketRole(normalized);
+      cached = await LocalStore.getMarketRole();
     } catch (_) {}
 
-    return normalized;
+    final u = _sb.auth.currentUser;
+    if (u == null) return cached;
+
+    // 1) tenta metadata primeiro
+    try {
+      final m1 = (u.userMetadata ?? const {}) as Map;
+      final m2 = (u.appMetadata ?? const {}) as Map;
+      final r = (m1['role'] ?? m2['role'] ?? '').toString().trim().toLowerCase();
+      if (r == 'pro' || r == 'client') {
+        if (r != cached) {
+          try { await LocalStore.setMarketRole(r); } catch (_) {}
+        }
+        return r;
+      }
+    } catch (_) {}
+
+    // 2) fallback pro banco (profiles.role)
+    try {
+      final row = await _sb
+          .from('profiles')
+          .select('role')
+          .eq('id', u.id)
+          .maybeSingle();
+
+      final r = (row?['role'] ?? '').toString().trim().toLowerCase();
+      if (r == 'pro' || r == 'client') {
+        if (r != cached) {
+          try { await LocalStore.setMarketRole(r); } catch (_) {}
+        }
+        return r;
+      }
+    } catch (_) {
+      // ignora: mantém cached
+    }
+
+    return cached;
   }
 }

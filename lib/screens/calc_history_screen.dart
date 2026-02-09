@@ -1,9 +1,5 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-
-import '../core/app_theme.dart';
-import '../core/local_store.dart';
-import 'package:meu_ajudante_fg/routes/app_routes.dart';
+import '../services/calc/calc_history_store.dart';
 
 class CalcHistoryScreen extends StatefulWidget {
   const CalcHistoryScreen({super.key});
@@ -13,8 +9,8 @@ class CalcHistoryScreen extends StatefulWidget {
 }
 
 class _CalcHistoryScreenState extends State<CalcHistoryScreen> {
-  List<Map<String, dynamic>> items = [];
-  bool loading = true;
+  bool _loading = true;
+  List<CalcHistoryItem> _items = [];
 
   @override
   void initState() {
@@ -23,119 +19,146 @@ class _CalcHistoryScreenState extends State<CalcHistoryScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => loading = true);
-    final raw = await LocalStore.getCalcHistoryRaw();
-    final list = <Map<String, dynamic>>[];
-    for (final line in raw) {
-      try {
-        final j = jsonDecode(line);
-        if (j is Map) list.add(j.cast<String, dynamic>());
-      } catch (_) {}
-    }
+    setState(() => _loading = true);
+    final items = await CalcHistoryStore.list();
     if (!mounted) return;
     setState(() {
-      items = list;
-      loading = false;
+      _items = items;
+      _loading = false;
     });
   }
 
-  String _fmt(Map<String, dynamic> j, String k, String fallback) =>
-      (j[k] ?? fallback).toString();
+  Future<void> _deleteOne(CalcHistoryItem it) async {
+    await CalcHistoryStore.remove(it.id);
+    await _load();
+  }
+
+  Future<void> _clearAll() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Limpar histórico?'),
+        content: const Text('Isso apaga todos os cálculos salvos neste aparelho.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Limpar')),
+        ],
+      ),
+    );
+
+    if (ok == true) {
+      await CalcHistoryStore.clear();
+      await _load();
+    }
+  }
+
+  void _openDetails(CalcHistoryItem it) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: const Color(0xFF0E141E),
+      builder: (_) {
+        Widget row(String k, String v) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Expanded(child: Text(k, style: TextStyle(color: Colors.white.withOpacity(.70), fontWeight: FontWeight.w700))),
+                  Text(v, style: const TextStyle(fontWeight: FontWeight.w900)),
+                ],
+              ),
+            );
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Detalhes', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white.withOpacity(.95))),
+              const SizedBox(height: 10),
+              row('Potência', '${it.powerW.toStringAsFixed(0)} W'),
+              row('Tensão', '${it.voltageV} V'),
+              row('Distância', '${it.distanceM.toStringAsFixed(1)} m'),
+              const Divider(height: 22),
+              row('Corrente', '${it.currentA.toStringAsFixed(2)} A'),
+              row('Cabo', '${it.cableMm2.toStringAsFixed(it.cableMm2 == it.cableMm2.roundToDouble() ? 0 : 1)} mm²'),
+              row('Disjuntor', '${it.breakerA} A'),
+              row('Queda', '${it.dropV.toStringAsFixed(2)} V (${it.dropPerc.toStringAsFixed(2)}%)'),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await _deleteOne(it);
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Apagado do histórico ✅')),
+                    );
+                  },
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Apagar este'),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bg,
       appBar: AppBar(
-        backgroundColor: AppTheme.bg,
-        title: const Text('Histórico do cálculo'),
+        title: const Text('Histórico de Cálculos'),
         actions: [
-          if (!loading && items.isNotEmpty)
+          if (_items.isNotEmpty)
             IconButton(
-              tooltip: 'Limpar',
-              onPressed: () async {
-                await LocalStore.clearCalcHistory();
-                await _load();
-              },
-              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Limpar tudo',
+              onPressed: _clearAll,
+              icon: const Icon(Icons.delete_sweep_outlined),
             ),
         ],
       ),
-      body: loading
+      body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : items.isEmpty
+          : _items.isEmpty
               ? Center(
                   child: Text(
-                    'Nenhum cálculo salvo ainda.',
+                    'Sem cálculos ainda.\nFaça o primeiro no “Cálculo Elétrico”.',
+                    textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white.withOpacity(.70)),
                   ),
                 )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: items.length,
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+                  itemCount: _items.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (_, i) {
-                    final j = items[i];
-                    final title = _fmt(j, 'title', 'Cálculo');
-                    final pot = _fmt(j, 'potW', '0');
-                    final v = _fmt(j, 'tensaoV', '0');
-                    final dist = _fmt(j, 'distM', '0');
-                    final disj = _fmt(j, 'disjA', '-');
-                    final cabo = _fmt(j, 'caboMm2', '-');
+                    final it = _items[i];
+                    final title = '${it.powerW.toStringAsFixed(0)}W • ${it.voltageV}V • ${it.distanceM.toStringAsFixed(0)}m';
+                    final sub = 'Cabo ${it.cableMm2.toStringAsFixed(it.cableMm2 == it.cableMm2.roundToDouble() ? 0 : 1)}mm² • Disj ${it.breakerA}A • ${it.currentA.toStringAsFixed(1)}A';
 
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: AppTheme.card,
-                        borderRadius: BorderRadius.circular(18),
-                        border:
-                            Border.all(color: AppTheme.border.withOpacity(.35)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.history, color: AppTheme.gold),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(title,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w900)),
-                                const SizedBox(height: 6),
-                                Text(
-                                  'P: $pot W • V: $v • Dist: $dist m',
-                                  style: TextStyle(
-                                      color: Colors.white.withOpacity(.70)),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Disj: $disj A • Cabo: $cabo mm²',
-                                  style: TextStyle(
-                                      color: Colors.white.withOpacity(.70)),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          TextButton(
-                            onPressed: () {
-                              Navigator.of(context).pushNamed(
-                                AppRoutes.calc,
-                                arguments: {
-                                  'title': title,
-                                  'powerW': j['potW'],
-                                  'voltage': j['tensaoV'],
-                                },
-                              );
-                            },
-                            child: Text('Usar',
-                                style: TextStyle(
-                                    color: AppTheme.gold,
-                                    fontWeight: FontWeight.w900)),
-                          ),
-                        ],
+                    return InkWell(
+                      onTap: () => _openDetails(it),
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(.06),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.white.withOpacity(.12)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                            const SizedBox(height: 6),
+                            Text(sub, style: TextStyle(color: Colors.white.withOpacity(.70))),
+                          ],
+                        ),
                       ),
                     );
                   },

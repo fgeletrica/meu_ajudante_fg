@@ -65,7 +65,12 @@ class _AccountScreenState extends State<AccountScreen> {
 
       final rawRole = (prof?['role'] ?? '').toString().trim();
       _role = (rawRole == 'pro') ? 'pro' : 'client';
-      // sincroniza cache local (evita herdar role de outra conta)_nameCtrl.text = (prof?['name'] ?? '').toString();
+      // sincroniza cache local (evita herdar role de outra conta)
+      try {
+        await LocalStore.setMarketRole(_role);
+      } catch (_) {}
+
+      _nameCtrl.text = (prof?['name'] ?? '').toString();
       _cityCtrl.text = (prof?['city'] ?? '').toString();
       _phoneCtrl.text = (prof?['phone'] ?? '').toString();
 
